@@ -127,7 +127,7 @@ def main():
     load_dotenv()
     token = os.getenv("BOT_TOKEN")
     port = int(os.getenv("PORT", 8443))
-    webhook_url = os.getenv("WEBHOOK_URL")  # пример: https://your-app.onrender.com
+    webhook_url = os.getenv("WEBHOOK_URL")  # пример: https://tg-anti-swear-bot.onrender.com
 
     app = ApplicationBuilder().token(token).build()
 
@@ -139,8 +139,8 @@ def main():
     app.run_webhook(
         listen="0.0.0.0",
         port=port,
-        url_path=token,
-        webhook_url=f"{webhook_url}/{token}",
+        url_path="webhook",  # <--- фикс: теперь путь не токен
+        webhook_url=f"{webhook_url}/webhook",  # <--- фикс
     )
 
 
