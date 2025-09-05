@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import requests
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, ChatPermissions
 from telegram.constants import ChatType
 from telegram.ext import (
     ApplicationBuilder,
@@ -19,21 +19,25 @@ from telegram.ext import (
 )
 
 # Настройки
-WINDOW_SECONDS = 60
-THRESHOLD = 3
-BAN_SECONDS = 30
+WINDOW_SECONDS = 60    # окно для подсчёта нарушений
+THRESHOLD = 3          # сколько раз можно нарушить
+BAN_SECONDS = 30       # наказание (бан) на 30 секунд
+
+# ----- файлы для кружочков (видео) -----
+VIDEO_FILES = ["murkakup.mp4", "murkac.mp4"]  # 🆕 добавлено
 
 # Фразы для Мурки 🐶
 MURKA_REPLIES = {
-    # голоса
-    "мурка спой": "voice",
-    "мурка пой": "voice",
-    "мурка спой песню": "voice",
+    # 🎶 Сначала команды для аудио
+    "мурка пой": ["audio"],
+    "мурка спой": ["audio"],
+    "мурка спой песню": ["audio"],
+    "мурка какая твоя любимая песня": ["audio"],
 
-    # кружочек
-    "мурка что делаешь": "video_note",
+    # 🎥 Команда для кружочка
+    "мурка что делаешь": ["video_note"],  # 🆕 добавлено
 
-    # обычные текстовые ответы
+    # Потом обычные ответы
     "бот": ["Кто звал? 🤖", "Я тут, я слежу 👀", "Не обижай меня, я стараюсь 😢", "Бот в деле, базар фильтруй 💪"],
     "барсик": ["Кажется это админ..."],
     "мура": ["Гав! 🐶 Тут Мурка!", "Мурка всегда рядом ❤️", "Мурка смотрит на тебя 👀"],
@@ -104,24 +108,28 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Ответы Мурки
     for key, answers in MURKA_REPLIES.items():
         if key in text:
-            if answers == "voice":
+            # 🎵 Голосовое
+            if "audio" in answers:
                 try:
-                    with open("song.ogg", "rb") as audio:
+                    # оставляю как у тебя работало
+                    with open("song.mp3", "rb") as audio:
                         await msg.reply_voice(audio)
                 except Exception:
                     await msg.reply_text("Ой, песню потеряла 😿")
+                return
 
-            elif answers == "video_note":
+            # 🎥 Кружочек-видео
+            if "video_note" in answers:
                 try:
-                    video_file = random.choice(["murkakup.mp4", "murkac.mp4"])
-                    with open(video_file, "rb") as video:
-                        await msg.reply_video_note(video)
+                    video_file = random.choice(VIDEO_FILES)
+                    with open(video_file, "rb") as f:
+                        await msg.reply_video_note(f)
                 except Exception:
-                    await msg.reply_text("Ой, кружочек потеряла 😿")
+                    await msg.reply_text("Ой, кружочек потеряла 🐱")
+                return
 
-            elif isinstance(answers, list):
-                await msg.reply_text(random.choice(answers))
-
+            # Обычный текстовый ответ
+            await msg.reply_text(random.choice(answers))
             return
 
     # Проверка на плохие слова
@@ -139,6 +147,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     st = state[key]
     name = user.mention_html()
+    admin_chat_id = os.getenv("ADMIN_LOG_CHAT_ID")
 
     if chat.type == ChatType.PRIVATE:
         if now - st.last_warn_at > 15:
