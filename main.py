@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import random
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -20,6 +21,31 @@ from telegram.ext import (
 WINDOW_SECONDS = 60    # окно для подсчёта нарушений
 THRESHOLD = 3          # сколько раз можно нарушить
 MUTE_SECONDS = 30      # мут на 30 секунд
+
+# Забавные фразы
+FUNNY_REPLIES = {
+    "бот": [
+        "Кто звал? 🤖",
+        "Я тут, я слежу 👀",
+        "Не обижай меня, я стараюсь 😢",
+        "Бот в деле, базар фильтруй 💪",
+    ],
+    "привет": [
+        "Привет, человечек 👋",
+        "Дарова! Как настроение?",
+        "Опа, приветики-пистолетики 🔫",
+    ],
+    "как дела": [
+        "У меня всегда отлично, я же бот 😎",
+        "Живу, работаю 24/7 🤖",
+        "Лучше, чем у людей, не болею 😉",
+    ],
+    "кто ты": [
+        "Я бот-модератор, твой ночной кошмар 😈",
+        "Я твой друг, но только если без матов 😅",
+        "Я искусственный разум. Почти Скайнет.",
+    ],
+}
 
 # Запрещённые слова и оскорбления
 BAD_PATTERNS = [
@@ -58,6 +84,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     text = msg.text.lower()
+
+    # --- Забавные ответы ---
+    for key, answers in FUNNY_REPLIES.items():
+        if key in text:
+            await msg.reply_text(random.choice(answers))
+            return
+
+    # --- Проверка на плохие слова ---
     if not any(r.search(text) for r in BAD_REGEXES):
         return
 
@@ -74,6 +108,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     st = state[key]
     name = user.mention_html()
 
+    admin_chat_id = os.getenv("ADMIN_LOG_CHAT_ID")
+
     # ЛС (просто предупреждение)
     if chat.type == ChatType.PRIVATE:
         if now - st.last_warn_at > 15:
@@ -84,9 +120,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Предупреждение
     if strikes < THRESHOLD:
         if now - st.last_warn_at > 15:
-            await msg.reply_html(
-                f"⚠️ {name}, предупреждение ({strikes}/{THRESHOLD}) за оскорбления."
-            )
+            warning_text = f"⚠️ {name}, предупреждение ({strikes}/{THRESHOLD}) за оскорбления."
+            await msg.reply_html(warning_text)
+            if admin_chat_id:
+                await context.bot.send_message(
+                    chat_id=admin_chat_id,
+                    text=f"👮 В чате {chat.title} пользователь {name} получил предупреждение ({strikes}/{THRESHOLD}).",
+                )
             st.last_warn_at = now
         return
 
@@ -100,7 +140,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             permissions=perms,
             until_date=until,
         )
-        await msg.reply_html(f"⛔ {name} получил мут на {MUTE_SECONDS} секунд!")
+        mute_text = f"⛔ {name} получил мут на {MUTE_SECONDS} секунд!"
+        await msg.reply_html(mute_text)
+        if admin_chat_id:
+            await context.bot.send_message(
+                chat_id=admin_chat_id,
+                text=f"🚫 В чате {chat.title} пользователь {name} получил МУТ на {MUTE_SECONDS} секунд.",
+            )
         q.clear()
         st.last_warn_at = now
     except Exception as e:
@@ -112,7 +158,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет 👋 Я модератор-бот!\n"
         "Я слежу за чатом и выдаю предупреждения за оскорбления.\n"
-        f"После {THRESHOLD} предупреждений — мут на {MUTE_SECONDS} секунд."
+        f"После {THRESHOLD} предупреждений — мут на {MUTE_SECONDS} секунд.\n"
+        "А ещё у меня есть смешные ответы 😉"
     )
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
