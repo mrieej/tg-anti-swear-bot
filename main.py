@@ -121,6 +121,10 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"- Мут: {MUTE_SECONDS} секунд"
     )
 
+# ✅ Новая команда
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✅ Я живой и работаю!")
+
 
 # ---------- Запуск ----------
 def main():
@@ -133,14 +137,15 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("ping", ping))   # <--- добавлено
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     # Запуск в режиме Webhook (для Render)
     app.run_webhook(
         listen="0.0.0.0",
         port=port,
-        url_path="webhook",  # <--- фикс: теперь путь не токен
-        webhook_url=f"{webhook_url}/webhook",  # <--- фикс
+        url_path="webhook",
+        webhook_url=f"{webhook_url}/webhook",
     )
 
 
