@@ -20,7 +20,7 @@ from telegram.ext import (
 # Настройки
 WINDOW_SECONDS = 60    # окно для подсчёта нарушений
 THRESHOLD = 3          # сколько раз можно нарушить
-MUTE_SECONDS = 30      # мут на 30 секунд
+MUTE_SECONDS = 30      # наказание (бан/мут) на 30 секунд
 
 # Забавные фразы
 FUNNY_REPLIES = {
@@ -130,27 +130,38 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             st.last_warn_at = now
         return
 
-    # Мут
+    # Наказание
     try:
-        until = datetime.now(timezone.utc) + timedelta(seconds=MUTE_SECONDS)
-        perms = ChatPermissions(can_send_messages=False)
-        await context.bot.restrict_chat_member(
-            chat.id,
-            user.id,
-            permissions=perms,
-            until_date=until,
-        )
-        mute_text = f"⛔ {name} получил мут на {MUTE_SECONDS} секунд!"
-        await msg.reply_html(mute_text)
-        if admin_chat_id:
-            await context.bot.send_message(
-                chat_id=admin_chat_id,
-                text=f"🚫 В чате {chat.title} пользователь {name} получил МУТ на {MUTE_SECONDS} секунд.",
+        # Проверим права бота
+        me = await context.bot.get_chat_member(chat.id, context.bot.id)
+        if me.can_restrict_members:
+            until = datetime.now(timezone.utc) + timedelta(seconds=MUTE_SECONDS)
+            perms = ChatPermissions(can_send_messages=False)
+            await context.bot.restrict_chat_member(
+                chat.id,
+                user.id,
+                permissions=perms,
+                until_date=until,
             )
+            mute_text = f"⛔ {name} получил бан на {MUTE_SECONDS} секунд!"
+            await msg.reply_html(mute_text)
+            if admin_chat_id:
+                await context.bot.send_message(
+                    chat_id=admin_chat_id,
+                    text=f"🚫 В чате {chat.title} пользователь {name} получил БАН на {MUTE_SECONDS} секунд.",
+                )
+        else:
+            funny_text = f"⛔ {name}, тебе повезло, у меня нет прав, но все знают, что ты нарушитель 😂"
+            await msg.reply_html(funny_text)
+            if admin_chat_id:
+                await context.bot.send_message(
+                    chat_id=admin_chat_id,
+                    text=f"⚠️ В чате {chat.title} пользователь {name} избежал наказания из-за отсутствия прав у бота.",
+                )
         q.clear()
         st.last_warn_at = now
     except Exception as e:
-        await msg.reply_html(f"⚠️ Ошибка при попытке замутить: {e}")
+        await msg.reply_html(f"⚠️ Ошибка при попытке наказать: {e}")
 
 
 # ---------- Команды ----------
@@ -158,7 +169,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет 👋 Я модератор-бот!\n"
         "Я слежу за чатом и выдаю предупреждения за оскорбления.\n"
-        f"После {THRESHOLD} предупреждений — мут на {MUTE_SECONDS} секунд.\n"
+        f"После {THRESHOLD} предупреждений — бан на {MUTE_SECONDS} секунд.\n"
         "А ещё у меня есть смешные ответы 😉"
     )
 
@@ -166,7 +177,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"⚙️ Настройки:\n"
         f"- Порог: {THRESHOLD} нарушений за {WINDOW_SECONDS} секунд\n"
-        f"- Мут: {MUTE_SECONDS} секунд"
+        f"- Наказание: {MUTE_SECONDS} секунд"
     )
 
 
