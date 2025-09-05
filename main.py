@@ -113,10 +113,28 @@ BAD_PATTERNS = [
     r"\bпид[оa]р\w*",
     r"\bдура\w*",
     r"\bдурак\w*",
-    r"\bтуп(ой|ая|ые|ые)\b",
+    r"\bтуп(ой|ая|ые|ые|орылый)\b",
     r"\bжоп\w*",
     r"\bписьк\w*",
+    r"\bчушка\b",
+    r"\bчухан\w*",
+    r"\bебанашк\w*",
+    r"\bсмо\b",
+    r"\bмразь\b",
+    r"\bдебил(ка)?\b",
+    r"\bдибил(ка)?\b",
+    r"\bурод(ка|ина)?\b",
+    r"\bдаун\b",
+    r"\bдолбоеб\w*",
+    r"\bк[ао]зел\b",
+    r"\bлох(и)?\b",
+    r"\bлошар\w*",
+    r"\bчмоня\b",
+    r"\bчмо\b",
+    r"\bговноед(ы|ка)?\b",
+    r"\bгнида\b",
 ]
+BAD_REGEXES = [re.compile(p, re.IGNORECASE) for p in BAD_PATTERNS]
 BAD_REGEXES = [re.compile(p, re.IGNORECASE) for p in BAD_PATTERNS]
 
 # Хранилище нарушений
