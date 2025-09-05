@@ -8,7 +8,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, ChatPermissions
 from telegram.constants import ChatType
 from telegram.ext import (
     ApplicationBuilder,
@@ -19,51 +19,22 @@ from telegram.ext import (
 )
 
 # Настройки
-WINDOW_SECONDS = 60
-THRESHOLD = 3
-BAN_SECONDS = 30
+WINDOW_SECONDS = 60    # окно для подсчёта нарушений
+THRESHOLD = 3          # сколько раз можно нарушить
+BAN_SECONDS = 30       # наказание (бан) на 30 секунд
 
-# Память для конвертера
-last_amount = defaultdict(float)
-
-# Словарь валют
-CURRENCY_MAP = {
-    "рубль": "RUB", "руб": "RUB", "₽": "RUB",
-    "доллар": "USD", "бакс": "USD", "$": "USD",
-    "евро": "EUR", "€": "EUR",
-    "фунт": "GBP", "стерлинг": "GBP", "£": "GBP",
-    "юань": "CNY", "¥": "CNY",
-    "йена": "JPY", "иена": "JPY",
-    "тенге": "KZT",
-    "гривна": "UAH",
-    "злотый": "PLN",
-    "биткоин": "BTC", "btc": "BTC", "₿": "BTC",
-    "эфир": "ETH", "eth": "ETH",
-}
-
-def normalize_currency(name: str) -> str:
-    name = name.lower()
-    return CURRENCY_MAP.get(name, name.upper())
-
-# Фразы Мурки 🐶 (оставляем твой список, не меняем)
-
+# Фразы для Мурки 🐶
 MURKA_REPLIES = {
     "бот": ["Кто звал? 🤖", "Я тут, я слежу 👀", "Не обижай меня, я стараюсь 😢", "Бот в деле, базар фильтруй 💪"],
     "мурка": ["Гав! 🐶 Тут Мурка!", "Мурка всегда рядом ❤️", "Мурка смотрит на тебя 👀"],
     "привет": ["Привет, человечек 👋", "Дарова! Как настроение?", "Опа, приветики-пистолетики 🔫", "Мурка машет лапкой 🐾"],
     "как дела": ["У меня всегда отлично, я же бот 😎", "Живу, работаю 24/7 🤖", "Лучше, чем у людей, не болею 😉", "Мурка радостно виляeт хвостиком 🐕"],
     "кто ты": ["Я бот-модератор, твой ночной кошмар 😈", "Я твой друг, но только если без матов 😅", "Я искусственный разум. Почти Скайнет.", "Я Мурка, твоя охранница 🐶"],
-    "гулять": ["Ура! 🐕 Кто сказал гулять?!", "Мурка уже бежит за поводком! 🐾", "Гулять — моё любимое занятие! 🌳"],
+    "гулять": ["Пошли скорее гулять! 🐕🌳", "Ура! Гулять-гулять-гулять! 🐾"],
     "дай лапу": ["Вот лапка 🐾", "Мурка протянула лапу 🐶", "На, держи лапку ❤️"],
     "играть": ["Играть?! Мурка готова! 🎉", "Давай играть, я принесла мячик ⚽", "Игры — это моё всё 🐕"],
     "мяч": ["⚽ Держи мячик!", "Мурка принесла тебе мяч 🐶", "Дай мячик, давай поиграем! 🎾"],
-    "вкусняшк": ["Мурка хочет вкусняшку 😋", "А можно котлетку? 🍖", "Угости Мурку чем-нибудь вкусным 🐾"],
-    "любишь": ["Мурка любит всех хороших людей ❤️", "Конечно тебя! 🐶", "Мурка любит вкусняшки и гулять 🌳"],
-    "песня": ["Aerosmith - What It Takes 🎶 ууу🐺💃", "Мурка напевает любимую песню 🎤"],
-    "мурка как дела": ["Гав! У меня всё отлично 🐾", "Лучше всех! Ведь я собачка Мурка 🐶💖"],
-    "мурка кого ты любишь": ["Конечно же тебя, мой человек 🐾❤️", "Люблю всех, кто даёт вкусняшки 🍖"],
-    "мурка хочешь вкусняшки": ["Гав-гав! Давай скорее! 🦴", "Котлетку? Уууу, давай! 🍖"],
-    "мурка какая твоя любимая песня": ["Aerosmith - What It Takes! ууу🐺💃", "Я пою громко: ГАВ-ГАВ-ГАВ 🎶"],
+    "вкусняшк": ["Дай котлетку! 🐶🍖", "Я обожаю вкусняшки, ммм 🦴"],
     "котлет": ["Котлетка? Дай две! 🍖🐾", "Я за котлету всё сделаю 🐕"],
     "дай мяч": ["⚽ Вот твой мячик, кидай обратно!", "⚽⚽⚽ Гав-гав, играем?"],
     "принеси мяч": ["⚽ Я принесла! Давай ещё раз кинь!", "⚽ Нашла мячик, держи!"],
@@ -78,62 +49,30 @@ MURKA_REPLIES = {
     "мурка попой": ["ГАВ-ГАВ-ГАВ! Это моя песня 🎤🐶"],
     "мурка злая": ["Грррррр 😈🐕", "Лучше не шути со мной! 🐺"],
     "мурка злой": ["Я могу быть страшной! 🐾👹", "Гав-гав! Не зли меня 🐕"],
+    "мурка какая твоя любимая песня": ["Aerosmith - What It Takes! ууу🐺💃", "Я пою громко: ГАВ-ГАВ-ГАВ 🎶"],
 }
 
-# --- Проверка плохих слов (оставляем как есть, твой список длинный) ---
+# Запрещённые слова
 BAD_PATTERNS = [
-    r"\bх[уy][йиеяё]\w*",
-    r"\bп[ие]зд[аыо]*\w*",
-    r"\b[её]б\w*",
-    r"\bбл[яе]д[ьй]*\w*",
-    r"\bсук[аио]*\w*",
-    r"\bмуд[ао]к\w*",
-    r"\bпид[оa]р\w*",
-    r"\bдура\w*",
-    r"\bдурак\w*",
-    r"\bтуп(ой|ая|ые|ые|орылый)\b",
-    r"\bжоп\w*",
-    r"\bписьк\w*",
-    r"\bчушка\b",
-    r"\bчухан\w*",
-    r"\bебанашк\w*",
-    r"\bсмо\b",
-    r"\bмразь\b",
-    r"\bдебил(ка)?\b",
-    r"\bдибил(ка)?\b",
-    r"\bурод(ка|ина)?\b",
-    r"\bдаун\b",
-    r"\bдолбоеб\w*",
-    r"\bк[ао]зел\b",
-    r"\bлох(и)?\b",
-    r"\bлошар\w*",
-    r"\bчмоня\b",
-    r"\bчмо\b",
-    r"\bговноед(ы|ка)?\b",
-    r"\bгнида\b",
+    r"\bх[уy][йиеяё]\w*", r"\bп[ие]зд[аыо]*\w*", r"\b[её]б\w*", r"\bбл[яе]д[ьй]*\w*",
+    r"\bсук[аио]*\w*", r"\bмуд[ао]к\w*", r"\bпид[оa]р\w*", r"\bдура\w*", r"\bдурак\w*",
+    r"\bтуп(ой|ая|ые|ые|орылый)\b", r"\bжоп\w*", r"\bписьк\w*", r"\bчушка\b",
+    r"\bчухан\w*", r"\bебанашк\w*", r"\bсмо\b", r"\bмразь\b", r"\bдебил(ка)?\b",
+    r"\bдибил(ка)?\b", r"\bурод(ка|ина)?\b", r"\bдаун\b", r"\bдолбоеб\w*", r"\bк[ао]зел\b",
+    r"\bлох(и)?\b", r"\bлошар\w*", r"\bчмоня\b", r"\bчмо\b", r"\bговноед(ы|ка)?\b", r"\bгнида\b",
 ]
 BAD_REGEXES = [re.compile(p, re.IGNORECASE) for p in BAD_PATTERNS]
 
+# Хранилище нарушений
 violations = defaultdict(lambda: deque(maxlen=50))
 
 @dataclass
 class UserState:
     last_warn_at: float = 0.0
-
 state = defaultdict(UserState)
 
-# --- Получение курса валют ---
-def fetch_rate(base: str, target: str) -> float | None:
-    try:
-        url = f"https://open.er-api.com/v6/latest/{base}"
-        resp = requests.get(url, timeout=5).json()
-        if resp.get("result") == "success":
-            return resp["rates"].get(target)
-    except Exception:
-        return None
-    return None
 
-# --- Обработка сообщений ---
+# ---------- Логика ----------
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     chat = update.effective_chat
@@ -142,32 +81,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = msg.text.lower()
 
-    # --- Конвертер валют ---
-    match_course = re.search(r"(курс|rate)\s+([a-zа-я₽$€£¥₿]+)\s*(?:к|to)?\s*([a-zа-я₽$€£¥₿]+)?", text)
-    if match_course:
-        base = normalize_currency(match_course.group(2))
-        target = normalize_currency(match_course.group(3)) if match_course.group(3) else "RUB"
-        rate = fetch_rate(base, target)
-        if rate:
-            await msg.reply_text(f"Курс: 1 {base} = {rate:.2f} {target}")
-        else:
-            await msg.reply_text("Не удалось получить курс.")
-        return
-
-    match_conv = re.search(r"(\d+(?:\.\d+)?)\s*([a-zа-я₽$€£¥₿]+)\s*(?:в|to)\s*([a-zа-я₽$€£¥₿]+)", text)
-    if match_conv:
-        amount = float(match_conv.group(1))
-        base = normalize_currency(match_conv.group(2))
-        target = normalize_currency(match_conv.group(3))
-        rate = fetch_rate(base, target)
-        if rate:
-            result = amount * rate
-            last_amount[user.id] = amount
-            await msg.reply_text(f"{amount} {base} = {result:.2f} {target}")
-        else:
-            await msg.reply_text("Не удалось получить курс.")
-        return
-
     # --- Ответы Мурки 🐶 ---
     for key, answers in MURKA_REPLIES.items():
         if key in text:
@@ -175,26 +88,107 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     # --- Проверка на плохие слова ---
-    if any(r.search(text) for r in BAD_REGEXES):
-        # (оставляем логику модерации, не меняем)
-        pass
+    if not any(r.search(text) for r in BAD_REGEXES):
+        return
+    key = (chat.id, user.id)
+    now = time.time()
+    q = violations[key]
+
+    while q and now - q[0] > WINDOW_SECONDS:
+        q.popleft()
+    q.append(now)
+    strikes = len(q)
+
+    st = state[key]
+    name = user.mention_html()
+    admin_chat_id = os.getenv("ADMIN_LOG_CHAT_ID")
+
+    if chat.type == ChatType.PRIVATE:
+        if now - st.last_warn_at > 15:
+            await msg.reply_html(f"⚠️ {name}, аккуратнее с выражениями.")
+            st.last_warn_at = now
+        return
+
+    if strikes < THRESHOLD:
+        if now - st.last_warn_at > 15:
+            warning_text = f"⚠️ {name}, предупреждение ({strikes}/{THRESHOLD}) за оскорбления."
+            await msg.reply_html(warning_text)
+            if admin_chat_id:
+                await context.bot.send_message(chat_id=admin_chat_id, text=f"👮 В чате {chat.title} пользователь {name} получил предупреждение ({strikes}/{THRESHOLD}).")
+            st.last_warn_at = now
+        return
+
+    try:
+        me = await context.bot.get_chat_member(chat.id, context.bot.id)
+        if me.can_restrict_members:
+            until = datetime.now(timezone.utc) + timedelta(seconds=BAN_SECONDS)
+            await context.bot.ban_chat_member(chat.id, user.id, until_date=until)
+            ban_text = f"⛔ {name} получил бан на {BAN_SECONDS} секунд!"
+            await msg.reply_html(ban_text)
+            if admin_chat_id:
+                await context.bot.send_message(chat_id=admin_chat_id, text=f"🚫 В чате {chat.title} пользователь {name} получил БАН на {BAN_SECONDS} секунд.")
+        else:
+            funny_text = f"⛔ {name}, тебе повезло, у меня нет прав, но все знают, что ты нарушитель 😂"
+            await msg.reply_html(funny_text)
+        q.clear()
+        st.last_warn_at = now
+    except Exception as e:
+        await msg.reply_html(f"⚠️ Ошибка при попытке наказать: {e}")
+
 
 # ---------- Команды ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Гав-гав! 🐶 Я Мурка — твой модератор!\n"
+    await update.message.reply_text("Гав-гав! 🐶 Я Мурка — твой модератор!\n"
         f"Я слежу за чатом и выдаю предупреждения за плохие слова.\n"
         f"После {THRESHOLD} предупреждений — бан на {BAN_SECONDS} секунд.\n"
-        "А ещё я люблю гулять, вкусняшки, играть с мячиком ⚽ и умею конвертировать валюты 💱"
-    )
+        "А ещё я люблю гулять, вкусняшки и играть с мячиком ⚽")
 
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"⚙️ Настройки:\n- Порог: {THRESHOLD} нарушений за {WINDOW_SECONDS} секунд\n- Наказание: {BAN_SECONDS} секунд")
+
+# Конвертер валют
+async def convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) != 3:
+        await update.message.reply_text("Использование: /convert <сумма> <из валюты> <в валюту>\nНапример: /convert 100 USD RUB")
+        return
+    amount, from_currency, to_currency = context.args
+    try:
+        amount = float(amount)
+    except ValueError:
+        await update.message.reply_text("Сумма должна быть числом!")
+        return
+    url = f"https://api.exchangerate.host/convert?from={from_currency.upper()}&to={to_currency.upper()}&amount={amount}"
+    try:
+        res = requests.get(url).json()
+        result = res.get("result")
+        if result:
+            await update.message.reply_text(f"{amount} {from_currency.upper()} = {result:.2f} {to_currency.upper()}")
+        else:
+            await update.message.reply_text("Ошибка: проверьте валюты.")
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка конвертации: {e}")
+
+
+# ---------- Запуск ----------
 def main():
     load_dotenv()
     token = os.getenv("BOT_TOKEN")
+    port = int(os.getenv("PORT", 8443))
+    webhook_url = os.getenv("WEBHOOK_URL")
+
     app = ApplicationBuilder().token(token).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("convert", convert))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.run_polling()
+
+    async def setup():
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        await app.bot.set_webhook(f"{webhook_url}/webhook")
+    app.post_init = setup
+
+    app.run_webhook(listen="0.0.0.0", port=port, url_path="webhook", webhook_url=f"{webhook_url}/webhook")
+
 
 if __name__ == "__main__":
     main()
