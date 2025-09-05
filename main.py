@@ -1,132 +1,145 @@
 import os
 import logging
-from datetime import datetime, timedelta, timezone
-from collections import deque
+import datetime
+from aiohttp import web
 from telegram import Update, ChatPermissions
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 
 # Логирование
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 
-# Конфигурация
-TOKEN = os.getenv("BOT_TOKEN")
+# Переменные окружения
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+PORT = int(os.getenv("PORT", 8000))
 
+# ID админа (можешь указать свой Telegram ID)
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+
+# Список запрещённых слов
 BAD_WORDS = [
-    "дурак", "дура", "идиот", "тупой", "тупая",
-    "писька", "жопа", "пошел в жопу", "пошла в жопу",
-    "лох", "лошара", "сволочь", "тварь"
+    "дурак", "дура", "тупой", "тупая", "идиот", "идиотка",
+    "писька", "жопа", "пошла в жопу", "пошел в жопу",
+    "сука", "мразь"
 ]
 
-THRESHOLD = 2           # кол-во предупреждений до мута
-MUTE_SECONDS = 30       # время мута
+# Счётчик предупреждений
+WARNINGS = {}
 
-# Хранилище состояния пользователей
-user_states = {}
-
-class UserState:
-    def __init__(self):
-        self.strikes = 0
-        self.queue = deque(maxlen=5)
-        self.last_warn_at = datetime.min.replace(tzinfo=timezone.utc)
 
 # Команды
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    await chat.send_message(
-        "Привет! 👋 Я бот-модератор.\n"
-        "Я удаляю оскорбления и могу замутить на 30 секунд.\n"
-        "Используй /status чтобы узнать настройки.\n"
-        "А ещё проверь меня через /ping 🚀"
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Привет 👋 Я бот-модератор.\n"
+        "Я выдаю предупреждения за оскорбления.\n"
+        "Если их будет 3 — замучу на 30 секунд ⏳.\n"
+        "Попробуй /ping 🚀"
     )
 
-async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    await chat.send_message("✅ Я живой и работаю!")
 
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    await chat.send_message(
-        f"⚙️ Настройки:\n"
-        f"- Плохие слова: {len(BAD_WORDS)}\n"
-        f"- Предупреждений до мута: {THRESHOLD}\n"
-        f"- Время мута: {MUTE_SECONDS} сек."
-    )
+async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✅ Я живой и работаю!")
 
-# Фильтр сообщений
-async def moderate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
-    chat = update.effective_chat
-    user = update.effective_user
 
-    if not msg or not msg.text:
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⚙️ Бот активен и фильтрует сообщения.")
+
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Список команд:\n/start\n/ping\n/status\n/help")
+
+
+# Проверка текста
+async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
         return
 
-    text = msg.text.lower()
-    if not any(bad in text for bad in BAD_WORDS):
-        return
+    user = update.message.from_user
+    chat = update.message.chat
+    text = update.message.text.lower()
 
-    # Удаляем сообщение
-    try:
-        await msg.delete()
-    except Exception as e:
-        logger.warning(f"Не смог удалить сообщение: {e}")
+    # Проверка на плохие слова
+    for bad_word in BAD_WORDS:
+        if bad_word in text:
+            user_id = user.id
+            WARNINGS[user_id] = WARNINGS.get(user_id, 0) + 1
+            count = WARNINGS[user_id]
 
-    # Обновляем статистику
-    state = user_states.setdefault(user.id, UserState())
-    state.queue.append(datetime.now(timezone.utc))
-    state.strikes += 1
-    now = datetime.now(timezone.utc)
+            # Сообщение админу
+            if ADMIN_ID != 0:
+                try:
+                    await context.bot.send_message(
+                        ADMIN_ID,
+                        f"👮 Нарушение в чате <b>{chat.title}</b>\n"
+                        f"👤 Пользователь: {user.mention_html()}\n"
+                        f"💬 Сообщение: <code>{update.message.text}</code>\n"
+                        f"⚠️ Предупреждений: {count}/3",
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logging.warning(f"Не удалось отправить сообщение админу: {e}")
 
-    name = user.mention_html()
+            if count < 3:
+                await update.message.reply_text(
+                    f"⚠️ {user.first_name}, предупреждение {count}/3 за слово «{bad_word}»!"
+                )
+            else:
+                WARNINGS[user_id] = 0  # сброс после мута
+                try:
+                    until_date = datetime.datetime.now() + datetime.timedelta(seconds=30)
+                    await chat.restrict_member(
+                        user_id,
+                        permissions=ChatPermissions(can_send_messages=False),
+                        until_date=until_date,
+                    )
+                    await update.message.reply_text(
+                        f"⛔ {user.first_name} замучен на 30 секунд за повторные оскорбления!"
+                    )
+                except Exception as e:
+                    logging.error(f"Ошибка при муте: {e}")
+            return
 
-    # Предупреждение
-    if state.strikes < THRESHOLD:
-        if now - state.last_warn_at > timedelta(seconds=15):
-            await chat.send_message(
-                f"⚠️ {name}, предупреждение за оскорбление "
-                f"({state.strikes}/{THRESHOLD}).",
-                parse_mode="HTML",
-            )
-            state.last_warn_at = now
-        return
+    # Реакция на слово "бот"
+    if "бот" in text:
+        await update.message.reply_text("Я тут! 👀")
 
-    # Мут
-    try:
-        until = datetime.now(timezone.utc) + timedelta(seconds=MUTE_SECONDS)
-        perms = ChatPermissions(can_send_messages=False)
-        await context.bot.restrict_chat_member(
-            chat.id,
-            user.id,
-            permissions=perms,
-            until_date=until,
-        )
-        await chat.send_message(
-            f"⛔ {name} замучен на {MUTE_SECONDS}с за оскорбления!",
-            parse_mode="HTML",
-        )
-        state.queue.clear()
-        state.last_warn_at = now
-    except Exception as e:
-        await chat.send_message(f"⚠️ Ошибка: {e}")
 
-# Запуск
+# Создание приложения
 def main():
-    app = Application.builder().token(TOKEN).build()
+    if not BOT_TOKEN or not WEBHOOK_URL:
+        raise RuntimeError("Нет BOT_TOKEN или WEBHOOK_URL в переменных окружения!")
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("ping", ping))
-    app.add_handler(CommandHandler("status", status))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, moderate))
+    app = Application.builder().token(BOT_TOKEN).build()
 
-    # Webhook
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.getenv("PORT", 8080)),
-        url_path=TOKEN,
-        webhook_url=f"{WEBHOOK_URL}/{TOKEN}",
-    )
+    # Команды
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("ping", cmd_ping))
+    app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("help", cmd_help))
+
+    # Текстовые сообщения
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+
+    # aiohttp веб-сервер
+    web_app = web.Application()
+    web_app.router.add_post("/webhook", app.webhook_handler)
+
+    async def health(request):
+        return web.Response(text="OK")
+
+    web_app.router.add_get("/", health)
+
+    # Запускаем сервер
+    web.run_app(web_app, host="0.0.0.0", port=PORT)
+
 
 if __name__ == "__main__":
     main()
