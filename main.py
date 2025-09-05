@@ -16,7 +16,7 @@ from telegram.ext import (
     filters,
 )
 
-# Настройки бота
+# ---------- Настройки ----------
 WINDOW_SECONDS = 60   # окно подсчёта нарушений (в секундах)
 THRESHOLD = 3         # сколько матов допустимо за окно
 MUTE_SECONDS = 30     # длительность мута (в секундах)
@@ -43,7 +43,7 @@ class UserState:
 state = defaultdict(UserState)
 
 
-# ---------- Логика обработки сообщений ----------
+# ---------- Обработка сообщений ----------
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     chat = update.effective_chat
@@ -53,6 +53,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     text = msg.text.lower()
+
+    # Логирование для отладки
+    print(f"[LOG] Chat:{chat.id} User:{user.id} Text:{text}")
+
+    # Проверка на мат
     if not any(r.search(text) for r in MAT_REGEXES):
         return
 
@@ -67,13 +72,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     st = state[key]
     name = user.mention_html()
 
-    # Автоудаление сообщения с матом
+    # Автоудаление сообщения
     try:
         await msg.delete()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[ERROR] Не удалось удалить сообщение: {e}")
 
-    # ЛС
+    # Если это ЛС
     if chat.type == ChatType.PRIVATE:
         if now - st.last_warn_at > 15:
             await msg.reply_html(f"⚠️ {name}, аккуратнее с лексикой.")
@@ -111,7 +116,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет! 👋 Я бот-модератор.\n"
         f"Я удаляю маты и могу замутить на {MUTE_SECONDS} секунд.\n"
-        "Используй /status чтобы узнать настройки."
+        "Используй /status чтобы узнать настройки.\n"
+        "А ещё проверь меня через /ping 🚀"
     )
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -121,7 +127,6 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"- Мут: {MUTE_SECONDS} секунд"
     )
 
-# ✅ Новая команда
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Я живой и работаю!")
 
@@ -137,10 +142,9 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("status", status))
-    app.add_handler(CommandHandler("ping", ping))   # <--- добавлено
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(CommandHandler("ping", ping))
+    app.add_handler(MessageHandler(filters.TEXT, handle_text))  # <--- убрал ограничение
 
-    # Запуск в режиме Webhook (для Render)
     app.run_webhook(
         listen="0.0.0.0",
         port=port,
