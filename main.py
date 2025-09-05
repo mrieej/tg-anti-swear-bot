@@ -70,8 +70,18 @@ violations = defaultdict(lambda: deque(maxlen=50))
 @dataclass
 class UserState:
     last_warn_at: float = 0.0
+    shame_count: int = 0  # сколько раз не смогли наказать
 
 state = defaultdict(UserState)
+
+# Псевдонимы (алиасы) для «позорников»: ключ = (chat_id, user_id) -> str
+aliases = {}
+
+def mention_with_alias(user, chat_id):
+    """Упомянуть пользователя с кастомной подписью, если она есть."""
+    label = aliases.get((chat_id, user.id)) or (user.first_name or "user")
+    # Кликабельное упоминание с кастомным текстом
+    return f'<a href="tg://user?id={user.id}">{label}</a>'
 
 
 # ---------- Логика ----------
@@ -106,7 +116,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     strikes = len(q)
 
     st = state[key]
-    name = user.mention_html()
+    name = mention_with_alias(user, chat.id)  # <-- используем алиас, если есть
 
     admin_chat_id = os.getenv("ADMIN_LOG_CHAT_ID")
 
@@ -123,18 +133,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             warning_text = f"⚠️ {name}, предупреждение ({strikes}/{THRESHOLD}) за оскорбления."
             await msg.reply_html(warning_text)
             if admin_chat_id:
-                await context.bot.send_message(
-                    chat_id=admin_chat_id,
-                    text=f"👮 В чате {chat.title} пользователь {name} получил предупреждение ({strikes}/{THRESHOLD}).",
-                )
+                try:
+                    await context.bot.send_message(
+                        chat_id=int(admin_chat_id),
+                        text=f"👮 В чате {chat.title} пользователь {user.full_name} получил предупреждение ({strikes}/{THRESHOLD}).",
+                    )
+                except Exception as e:
+                    print(f"ADMIN_LOG_CHAT_ID send error: {e}")
             st.last_warn_at = now
         return
 
     # Наказание
     try:
-        # Проверим права бота
         me = await context.bot.get_chat_member(chat.id, context.bot.id)
-        if me.can_restrict_members:
+        can_restrict = getattr(me, "can_restrict_members", False)
+
+        if can_restrict:
             until = datetime.now(timezone.utc) + timedelta(seconds=MUTE_SECONDS)
             perms = ChatPermissions(can_send_messages=False)
             await context.bot.restrict_chat_member(
@@ -146,38 +160,81 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             mute_text = f"⛔ {name} получил бан на {MUTE_SECONDS} секунд!"
             await msg.reply_html(mute_text)
             if admin_chat_id:
-                await context.bot.send_message(
-                    chat_id=admin_chat_id,
-                    text=f"🚫 В чате {chat.title} пользователь {name} получил БАН на {MUTE_SECONDS} секунд.",
-                )
+                try:
+                    await context.bot.send_message(
+                        chat_id=int(admin_chat_id),
+                        text=f"🚫 В чате {chat.title} пользователь {user.full_name} получил БАН на {MUTE_SECONDS} секунд.",
+                    )
+                except Exception as e:
+                    print(f"ADMIN_LOG_CHAT_ID send error: {e}")
+            q.clear()
+            st.shame_count = 0  # сбросим «позор»
         else:
-            funny_text = f"⛔ {name}, тебе повезло, у меня нет прав, но все знают, что ты нарушитель 😂"
-            await msg.reply_html(funny_text)
+            # нет прав — позорим и считаем
+            st.shame_count += 1
+            shame_messages = [
+                f"😂 {name}, у меня нет прав замутить тебя, но ты официально ПОЗОР чата 🤡",
+                f"👀 {name}, снова позоришься! Все уже запомнили тебя как нарушителя 😅",
+                f"🤣 {name}, уровень ПОЗОРА: БОСС! Все смеются над тобой 😂",
+                f"🔥 {name}, твой позор становится легендой, чату без тебя скучно 😈",
+            ]
+            msg_text = shame_messages[min(st.shame_count - 1, len(shame_messages) - 1)]
+            await msg.reply_html(msg_text)
+
+            # На 5-й и далее — попытка дать титул админу (если нарушитель админ),
+            # иначе вешаем внутренний «псевдоним» 🤡 Позорник {first_name}
+            if st.shame_count >= 5:
+                applied = False
+                # 1) Попробуем выдать custom title, если у бота есть право и юзер админ
+                try:
+                    victim_cm = await context.bot.get_chat_member(chat.id, user.id)
+                    is_admin = victim_cm.status in ("administrator", "creator")
+                    can_set_title = getattr(me, "can_promote_members", False)
+                    if is_admin and can_set_title:
+                        new_title = "🤡 Позорник"
+                        await context.bot.set_chat_administrator_custom_title(chat.id, user.id, new_title)
+                        await msg.reply_html(f"🎭 {name} получил титул администратора: <b>{new_title}</b>")
+                        applied = True
+                except Exception as e:
+                    # просто сообщим, но не падаем
+                    await msg.reply_html(f"⚠️ Хотел выдать титул, но не вышло: {e}")
+
+                # 2) Если титул не вышло — даём внутренний алиас
+                if not applied:
+                    aliases[(chat.id, user.id)] = f"🤡 Позорник {user.first_name or 'user'}"
+                    await msg.reply_html(
+                        f"🏷 Теперь я буду звать тебя: <b>{aliases[(chat.id, user.id)]}</b>."
+                    )
+
             if admin_chat_id:
-                await context.bot.send_message(
-                    chat_id=admin_chat_id,
-                    text=f"⚠️ В чате {chat.title} пользователь {name} избежал наказания из-за отсутствия прав у бота.",
-                )
-        q.clear()
+                try:
+                    await context.bot.send_message(
+                        chat_id=int(admin_chat_id),
+                        text=(f"⚠️ В чате {chat.title} {user.full_name} снова нарушил, "
+                              f"но у бота нет прав. ПОЗОРный счётчик: {st.shame_count}."),
+                    )
+                except Exception as e:
+                    print(f"ADMIN_LOG_CHAT_ID send error: {e}")
+
         st.last_warn_at = now
     except Exception as e:
-        await msg.reply_html(f"⚠️ Ошибка при попытке наказать: {e}")
+        await msg.reply_html(f"⚠️ Ошибка при наказании: {e}")
 
 
 # ---------- Команды ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет 👋 Я модератор-бот!\n"
-        "Я слежу за чатом и выдаю предупреждения за оскорбления.\n"
-        f"После {THRESHOLD} предупреждений — бан на {MUTE_SECONDS} секунд.\n"
-        "А ещё у меня есть смешные ответы 😉"
+        f"После {THRESHOLD} предупреждений — бан на {MUTE_SECONDS} секунд (если есть права).\n"
+        "Если прав нет — включается ПОЗОР-режим 🤡 с псевдонимом."
     )
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"⚙️ Настройки:\n"
         f"- Порог: {THRESHOLD} нарушений за {WINDOW_SECONDS} секунд\n"
-        f"- Наказание: {MUTE_SECONDS} секунд"
+        f"- Наказание: {MUTE_SECONDS} секунд\n"
+        f"- Позорный счётчик и алиасы включены 🤡"
     )
 
 
