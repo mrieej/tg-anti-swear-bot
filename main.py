@@ -1,103 +1,95 @@
 import os
-import re
-import time
+import logging
 from datetime import datetime, timedelta, timezone
-from collections import defaultdict, deque
-from dataclasses import dataclass
-
-from dotenv import load_dotenv
+from collections import deque
 from telegram import Update, ChatPermissions
-from telegram.constants import ChatType
-from telegram.ext import (
-    ApplicationBuilder,
-    ContextTypes,
-    MessageHandler,
-    CommandHandler,
-    filters,
-)
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# Настройки бота
-WINDOW_SECONDS = 60   # окно подсчёта нарушений (в секундах)
-THRESHOLD = 3         # сколько нарушений допустимо за окно
-MUTE_SECONDS = 30     # длительность мута (в секундах)
+# Логирование
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Список запрещённых слов и оскорблений
-BAD_PATTERNS = [
-    # маты
-    r"\bх[уy][йиеяё]\w*",
-    r"\bп[ие]зд[аыо]*\w*",
-    r"\b[её]б\w*",
-    r"\bбл[яе]д[ьй]*\w*",
-    r"\bсук[аио]*\w*",
-    r"\bмуд[ао]к\w*",
-    r"\bпид[оa]р\w*",
+# Конфигурация
+TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-    # оскорбления и запрещённые слова
-    r"\bдурак\w*",
-    r"\bтуп[ао]й\w*",
-    r"\bидиот\w*",
-    r"\bжоп\w*",
-    r"\bписьк\w*",
-    r"\bговн\w*",
-    r"\bпош(ел|ёл)\s+в\s+жоп\w*",
+BAD_WORDS = [
+    "дурак", "дура", "идиот", "тупой", "тупая",
+    "писька", "жопа", "пошел в жопу", "пошла в жопу",
+    "лох", "лошара", "сволочь", "тварь"
 ]
 
-BAD_REGEXES = [re.compile(p, re.IGNORECASE) for p in BAD_PATTERNS]
+THRESHOLD = 2           # кол-во предупреждений до мута
+MUTE_SECONDS = 30       # время мута
 
-# Хранилище нарушений
-violations = defaultdict(lambda: deque(maxlen=50))
+# Хранилище состояния пользователей
+user_states = {}
 
-@dataclass
 class UserState:
-    last_warn_at: float = 0.0
+    def __init__(self):
+        self.strikes = 0
+        self.queue = deque(maxlen=5)
+        self.last_warn_at = datetime.min.replace(tzinfo=timezone.utc)
 
-state = defaultdict(UserState)
+# Команды
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    await chat.send_message(
+        "Привет! 👋 Я бот-модератор.\n"
+        "Я удаляю оскорбления и могу замутить на 30 секунд.\n"
+        "Используй /status чтобы узнать настройки.\n"
+        "А ещё проверь меня через /ping 🚀"
+    )
 
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    await chat.send_message("✅ Я живой и работаю!")
 
-# ---------- Логика обработки сообщений ----------
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    await chat.send_message(
+        f"⚙️ Настройки:\n"
+        f"- Плохие слова: {len(BAD_WORDS)}\n"
+        f"- Предупреждений до мута: {THRESHOLD}\n"
+        f"- Время мута: {MUTE_SECONDS} сек."
+    )
+
+# Фильтр сообщений
+async def moderate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     chat = update.effective_chat
     user = update.effective_user
 
-    if not msg or not user or not msg.text:
+    if not msg or not msg.text:
         return
 
     text = msg.text.lower()
-    if not any(r.search(text) for r in BAD_REGEXES):
+    if not any(bad in text for bad in BAD_WORDS):
         return
 
-    key = (chat.id, user.id)
-    now = time.time()
-    q = violations[key]
-    while q and now - q[0] > WINDOW_SECONDS:
-        q.popleft()
-    q.append(now)
-    strikes = len(q)
-
-    st = state[key]
-    name = user.mention_html()
-
-    # Автоудаление сообщения
+    # Удаляем сообщение
     try:
         await msg.delete()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Не смог удалить сообщение: {e}")
 
-    # ЛС
-    if chat.type == ChatType.PRIVATE:
-        if now - st.last_warn_at > 15:
-            await msg.reply_html(f"⚠️ {name}, аккуратнее с выражениями.")
-            st.last_warn_at = now
-        return
+    # Обновляем статистику
+    state = user_states.setdefault(user.id, UserState())
+    state.queue.append(datetime.now(timezone.utc))
+    state.strikes += 1
+    now = datetime.now(timezone.utc)
+
+    name = user.mention_html()
 
     # Предупреждение
-    if strikes < THRESHOLD:
-        if now - st.last_warn_at > 15:
-            await msg.reply_html(
-                f"⚠️ {name}, предупреждение за оскорбление ({strikes}/{THRESHOLD})."
+    if state.strikes < THRESHOLD:
+        if now - state.last_warn_at > timedelta(seconds=15):
+            await chat.send_message(
+                f"⚠️ {name}, предупреждение за оскорбление "
+                f"({state.strikes}/{THRESHOLD}).",
+                parse_mode="HTML",
             )
-            st.last_warn_at = now
+            state.last_warn_at = now
         return
 
     # Мут
@@ -110,54 +102,31 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             permissions=perms,
             until_date=until,
         )
-        await msg.reply_html(f"⛔ {name} замучен на {MUTE_SECONDS}с за оскорбления!")
-        q.clear()
-        st.last_warn_at = now
+        await chat.send_message(
+            f"⛔ {name} замучен на {MUTE_SECONDS}с за оскорбления!",
+            parse_mode="HTML",
+        )
+        state.queue.clear()
+        state.last_warn_at = now
     except Exception as e:
-        await msg.reply_html(f"⚠️ Ошибка: {e}")
+        await chat.send_message(f"⚠️ Ошибка: {e}")
 
-
-# ---------- Команды ----------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Привет! 👋 Я бот-модератор.\n"
-        f"Я удаляю маты и оскорбления. Если их слишком много — дам мут на {MUTE_SECONDS} секунд.\n"
-        "Используй /status чтобы узнать настройки.\n"
-        "Проверь меня через /ping 🚀"
-    )
-
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"⚙️ Настройки:\n"
-        f"- Порог: {THRESHOLD} нарушений за {WINDOW_SECONDS} секунд\n"
-        f"- Мут: {MUTE_SECONDS} секунд"
-    )
-
-async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ Я живой и работаю!")
-
-
-# ---------- Запуск ----------
+# Запуск
 def main():
-    load_dotenv()
-    token = os.getenv("BOT_TOKEN")
-    port = int(os.getenv("PORT", 8443))
-    webhook_url = os.getenv("WEBHOOK_URL")
-
-    app = ApplicationBuilder().token(token).build()
+    app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("ping", ping))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, moderate))
 
+    # Webhook
     app.run_webhook(
         listen="0.0.0.0",
-        port=port,
-        url_path="webhook",
-        webhook_url=f"{webhook_url}/webhook",
+        port=int(os.getenv("PORT", 8080)),
+        url_path=TOKEN,
+        webhook_url=f"{WEBHOOK_URL}/{TOKEN}",
     )
-
 
 if __name__ == "__main__":
     main()
