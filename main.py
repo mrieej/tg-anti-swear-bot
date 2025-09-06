@@ -19,12 +19,28 @@ from telegram.ext import (
 )
 
 # Настройки
-WINDOW_SECONDS = 60    # окно для подсчёта нарушений
-THRESHOLD = 3          # сколько раз можно нарушить
-BAN_SECONDS = 30       # наказание (бан) на 30 секунд
+WINDOW_SECONDS = 60
+THRESHOLD = 3
+BAN_SECONDS = 30
 
-# ----- файлы для кружочков (видео) -----
-VIDEO_FILES = ["murkakup.mp4", "murkac.mp4"]  # 🆕 добавлено
+# Дополнительные списки 🆕
+MAGIC_BALL = [
+    "Бесспорно ✅", "Да, конечно 💯", "Лучше не надейся ❌", "Сомнительно 🤔",
+    "Вполне возможно 🔮", "Сконцентрируйся и спроси ещё 🌀", "Не думаю 👎", "Да! 🎉"
+]
+
+COMPLIMENTS = [
+    "Ты сегодня особенно крут(а) 😎",
+    "У тебя всё получится 💪",
+    "Ты светишься добротой ✨",
+    "Мир становится лучше, когда ты рядом 🌍",
+    "Ты словно солнышко 🌞"
+]
+
+WEATHER = [
+    "На улице ясно ☀️", "Сегодня дождик 🌧", "Скоро снег ❄️", "Облачно, но тепло ☁️",
+    "Погода отличная для прогулки 🐾"
+]
 
 # Фразы для Мурки 🐶
 MURKA_REPLIES = {
@@ -76,6 +92,17 @@ MURKA_REPLIES = {
     "хочешь кушать": ["Конечно!😋😋😋", "Ты еще спрашиваешь???", "Всегда да!"],
     "давай болтать": ["Гав! Давай, но я еще учусь разговаривать как вы!"],
     "ногти стричь":["Нет нет нет... Только не это", "😰 Я пожалуй пойду"]
+    # 🎱 Новые команды
+    "мурка шар": ["magic_ball"],
+    "мурка скажи правду": ["magic_ball"],
+    "мурка скажи комплимент": ["compliment"],
+    "мурка какая погода": ["weather"],
+    "мурка число": ["number"],
+    "мурка обнимашки": ["hug"],
+
+    # 🎲 Кубик и кость
+    "кинь кубик": ["dice"],
+    "кинь кость": ["dice"]
 }
 
 # Запрещённые слова
@@ -102,94 +129,106 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     chat = update.effective_chat
     user = update.effective_user
-
     if not msg or not user or not msg.text:
         return
 
     text = msg.text.lower()
 
-    # Ответы Мурки
     for key, answers in MURKA_REPLIES.items():
         if key in text:
-            # 🎵 Голосовое
+            # 🎶 Голосовые
             if "audio" in answers:
                 try:
-                    # оставляю как у тебя работало
-                    with open("song.mp3", "rb") as audio:
+                    with open("song.ogg", "rb") as audio:
                         await msg.reply_voice(audio)
-                except Exception:
+                except:
                     await msg.reply_text("Ой, песню потеряла 😿")
-                return
 
-            # 🎥 Кружочек-видео
-            if "video_note" in answers:
+            # 🎥 Видео-кружки
+            elif "video_note" in answers:
                 try:
-                    video_file = random.choice(VIDEO_FILES)
-                    with open(video_file, "rb") as f:
-                        await msg.reply_video_note(f)
-                except Exception:
-                    await msg.reply_text("Ой, кружочек потеряла 🐱")
-                return
+                    video_file = random.choice(["murkakup.mp4", "murkac.mp4"])
+                    with open(video_file, "rb") as video:
+                        await msg.reply_video_note(video)
+                except:
+                    await msg.reply_text("Ой, кружочек потеряла 😿")
 
-            # Обычный текстовый ответ
-            await msg.reply_text(random.choice(answers))
+            # 🎱 Шар судьбы
+            elif "magic_ball" in answers:
+                await msg.reply_text(random.choice(MAGIC_BALL))
+
+            # 💖 Комплименты
+            elif "compliment" in answers:
+                await msg.reply_text(random.choice(COMPLIMENTS))
+
+            # 🌦 Погода
+            elif "weather" in answers:
+                await msg.reply_text(random.choice(WEATHER))
+
+            # 🔢 Угадай число
+            elif "number" in answers:
+                await msg.reply_text(f"Я загадала число: {random.randint(1,10)} 🔢")
+
+            # 🤗 Обнимашки
+            elif "hug" in answers:
+                await msg.reply_text("Мурка обняла тебя лапками 🤗🐾")
+
+            # 🎲 Кубик
+            elif "dice" in answers:
+                await msg.reply_dice()
+
+            else:
+                await msg.reply_text(random.choice(answers))
             return
 
     # Проверка на плохие слова
-    if not any(r.search(text) for r in BAD_REGEXES):
-        return
+    if any(r.search(text) for r in BAD_REGEXES):
+        key = (chat.id, user.id)
+        now = time.time()
+        q = violations[key]
+        while q and now - q[0] > WINDOW_SECONDS:
+            q.popleft()
+        q.append(now)
+        strikes = len(q)
+        st = state[key]
+        name = user.mention_html()
 
-    key = (chat.id, user.id)
-    now = time.time()
-    q = violations[key]
+        if chat.type == ChatType.PRIVATE:
+            if now - st.last_warn_at > 15:
+                await msg.reply_html(f"⚠️ {name}, аккуратнее с выражениями.")
+                st.last_warn_at = now
+            return
 
-    while q and now - q[0] > WINDOW_SECONDS:
-        q.popleft()
-    q.append(now)
-    strikes = len(q)
+        if strikes < THRESHOLD:
+            if now - st.last_warn_at > 15:
+                await msg.reply_html(f"⚠️ {name}, предупреждение ({strikes}/{THRESHOLD}).")
+                st.last_warn_at = now
+            return
 
-    st = state[key]
-    name = user.mention_html()
-    admin_chat_id = os.getenv("ADMIN_LOG_CHAT_ID")
-
-    if chat.type == ChatType.PRIVATE:
-        if now - st.last_warn_at > 15:
-            await msg.reply_html(f"⚠️ {name}, аккуратнее с выражениями.")
+        try:
+            me = await context.bot.get_chat_member(chat.id, context.bot.id)
+            if me.can_restrict_members:
+                until = datetime.now(timezone.utc) + timedelta(seconds=BAN_SECONDS)
+                await context.bot.ban_chat_member(chat.id, user.id, until_date=until)
+                await msg.reply_html(f"⛔ {name} получил бан на {BAN_SECONDS} секунд!")
+            q.clear()
             st.last_warn_at = now
-        return
-
-    if strikes < THRESHOLD:
-        if now - st.last_warn_at > 15:
-            warning_text = f"⚠️ {name}, предупреждение ({strikes}/{THRESHOLD}) за оскорбления."
-            await msg.reply_html(warning_text)
-            st.last_warn_at = now
-        return
-
-    try:
-        me = await context.bot.get_chat_member(chat.id, context.bot.id)
-        if me.can_restrict_members:
-            until = datetime.now(timezone.utc) + timedelta(seconds=BAN_SECONDS)
-            await context.bot.ban_chat_member(chat.id, user.id, until_date=until)
-            await msg.reply_html(f"⛔ {name} получил бан на {BAN_SECONDS} секунд!")
-        q.clear()
-        st.last_warn_at = now
-    except Exception as e:
-        await msg.reply_html(f"⚠️ Ошибка: {e}")
+        except Exception as e:
+            await msg.reply_html(f"⚠️ Ошибка: {e}")
 
 # ---------- Команды ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Гав-гав! 🐶 Я Мурка — твой модератор!\n"
         f"После {THRESHOLD} предупреждений — бан на {BAN_SECONDS} секунд.\n"
-        "А ещё я люблю гулять, вкусняшки и играть с мячиком ⚽"
+        "А ещё я умею петь, присылать кружочки, обниматься и даже играть в шар судьбы 🎱"
     )
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        f"⚙️ Настройки:\n- Порог: {THRESHOLD} нарушений за {WINDOW_SECONDS} секунд\n- Наказание: {BAN_SECONDS} секунд"
+        f"⚙️ Настройки:\nПорог: {THRESHOLD}\nОкно: {WINDOW_SECONDS} сек\nБан: {BAN_SECONDS} сек"
     )
 
-# ---------- Новая команда: напоминания ----------
 async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
         await update.message.reply_text("Использование: /remind <минуты> <текст>")
@@ -200,13 +239,10 @@ async def remind(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("Укажи количество минут числом.")
         return
-
     await update.message.reply_text(f"⏰ Напоминание через {minutes} мин: {text}")
     await context.job_queue.run_once(
         lambda ctx: ctx.bot.send_message(update.effective_chat.id, f"🔔 Напоминание: {text}"),
         when=minutes * 60,
-        chat_id=update.effective_chat.id,
-        name=str(update.effective_chat.id),
     )
 
 # ---------- Запуск ----------
