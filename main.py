@@ -18,6 +18,9 @@ from telegram.ext import (
     filters,
 )
 
+# Базовая папка скрипта (чтобы файлы всегда находились)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Настройки
 WINDOW_SECONDS = 60
 THRESHOLD = 3
@@ -91,7 +94,8 @@ MURKA_REPLIES = {
     "кинь монетку": ["орел","решка"],
     "хочешь кушать": ["Конечно!😋😋😋", "Ты еще спрашиваешь???", "Всегда да!"],
     "давай болтать": ["Гав! Давай, но я еще учусь разговаривать как вы!"],
-    "ногти стричь":["Нет нет нет... Только не это", "😰 Я пожалуй пойду"],
+    "ногти стричь": ["Нет нет нет... Только не это", "😰 Я пожалуй пойду"],  # ← ВАЖНО: добавлена запятая здесь
+
     # 🎱 Новые команды
     "мурка шар": ["magic_ball"],
     "мурка скажи правду": ["magic_ball"],
@@ -139,18 +143,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # 🎶 Голосовые
             if "audio" in answers:
                 try:
-                    with open("song.ogg", "rb") as audio:
+                    audio_path = os.path.join(BASE_DIR, "song.ogg")
+                    with open(audio_path, "rb") as audio:
                         await msg.reply_voice(audio)
-                except:
+                except Exception:
                     await msg.reply_text("Ой, песню потеряла 😿")
 
             # 🎥 Видео-кружки
             elif "video_note" in answers:
                 try:
                     video_file = random.choice(["murkakup.mp4", "murkac.mp4"])
-                    with open(video_file, "rb") as video:
+                    video_path = os.path.join(BASE_DIR, video_file)
+                    with open(video_path, "rb") as video:
                         await msg.reply_video_note(video)
-                except:
+                except Exception:
                     await msg.reply_text("Ой, кружочек потеряла 😿")
 
             # 🎱 Шар судьбы
