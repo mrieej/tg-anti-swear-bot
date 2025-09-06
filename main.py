@@ -143,7 +143,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # 🎶 Голосовые
             if "audio" in answers:
                 try:
-                    audio_path = os.path.join(BASE_DIR, "song.ogg")
+                    audio_path = os.path.join(os.getcwd(), "song.ogg")
                     with open(audio_path, "rb") as audio:
                         await msg.reply_voice(audio)
                 except Exception:
@@ -153,7 +153,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif "video_note" in answers:
                 try:
                     video_file = random.choice(["murkakup.mp4", "murkac.mp4"])
-                    video_path = os.path.join(BASE_DIR, video_file)
+                    video_path = os.path.join(os.getcwd(), video_file)
                     with open(video_path, "rb") as video:
                         await msg.reply_video_note(video)
                 except Exception:
@@ -187,7 +187,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await msg.reply_text(random.choice(answers))
             return
 
-    # Проверка на плохие слова
+    # Проверка на плохие слова (оставляем как есть, не меняем)
     if any(r.search(text) for r in BAD_REGEXES):
         key = (chat.id, user.id)
         now = time.time()
@@ -221,7 +221,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             st.last_warn_at = now
         except Exception as e:
             await msg.reply_html(f"⚠️ Ошибка: {e}")
-
 # ---------- Команды ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
